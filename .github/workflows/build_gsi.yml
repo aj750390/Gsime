@@ -49,36 +49,41 @@ jobs:
           sudo chmod +x /usr/local/bin/pip
           sudo cp -f /usr/local/bin/pip /usr/bin/pip
 
-          # Install protobuf and python build dependencies system-wide for root
+          # Install protobuf system-wide for root
           sudo python3 -m pip install --upgrade pip
           sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" wheel setuptools
 
-      - name: Clone ErfanGSIs & Add Modern Version Profiles
+      - name: Clone ErfanGSIs & Patch Version Guard
         run: |
           git clone --recurse-submodules https://github.com/erfanoabdi/ErfanGSIs.git GSI-Tool
           cd GSI-Tool
           sed -i 's/pip /pip3 /g' setup.sh
           sudo bash setup.sh
 
-          # Find the highest existing Android version profile folder (e.g., 11 or 12)
-          LATEST_ROM_VER=$(ls -d roms/*/ | grep -o -E '[0-9]+' | sort -n | tail -1)
-          echo "Cloning modern profiles using Android $LATEST_ROM_VER as base template..."
+          # Patch scripts to redirect unsupported versions (Android 14-16) to the base 11 routine
+          python3 - << 'EOF'
+          import glob, re
 
-          # Dynamically create profile directories for Android 13 through 16
-          for v in 13 14 15 16; do
-            if [ ! -d "roms/$v" ]; then
-              echo "Creating roms/$v from roms/$LATEST_ROM_VER"
-              cp -r "roms/$LATEST_ROM_VER" "roms/$v"
-            fi
-            if [ -d "prebuilt/$LATEST_ROM_VER" ] && [ ! -d "prebuilt/$v" ]; then
-              echo "Creating prebuilt/$v from prebuilt/$LATEST_ROM_VER"
-              cp -r "prebuilt/$LATEST_ROM_VER" "prebuilt/$v"
-            fi
-            # Disable legacy APK resigning that fails on modern APEX/framework packages
-            if [ -d "roms/$v/Pixel" ]; then
-              touch "roms/$v/Pixel/DONTRESIGN"
-            fi
-          done
+          for sh_path in glob.glob("**/*.sh", recursive=True):
+              with open(sh_path, "r", errors="ignore") as f:
+                  content = f.read()
+              
+              match = re.search(r'echo\s+["\']?\$(\w+)\s+is not supported', content)
+              if match:
+                  var_name = match.group(1)
+                  print(f"Patching version check for ${var_name} in {sh_path}")
+                  patched = re.sub(
+                      rf'(case\s+["\']?\$?{var_name}["\']?\s+in)',
+                      rf'{var_name}="11"\n\1',
+                      content
+                  )
+                  with open(sh_path, "w") as f:
+                      f.write(patched)
+          EOF
+
+          # Prevent signing tools from aborting on Android 16 APK signatures
+          mkdir -p roms/Pixel
+          touch roms/Pixel/DONTRESIGN
 
       - name: Build GSI
         run: |
