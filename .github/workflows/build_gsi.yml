@@ -1,4 +1,4 @@
-name: Port OEM GSI via ErfanGSIs
+name: Port OEM GSI via ErfanGSIsmod
 
 on:
   workflow_dispatch:
@@ -33,62 +33,11 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Install System Dependencies & Pip Wrapper
+      - name: Clone Custom GSI Builder
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            git python3 python3-pip python-is-python3 openjdk-11-jdk-headless \
-            p7zip-full unace unrar zip unzip simg2img \
-            brotli aria2 xz-utils e2fsprogs libfuse-dev
-          
-          # Create an executable wrapper so any call to 'pip' routes to python3 -m pip
-          sudo tee /usr/local/bin/pip > /dev/null << 'EOF'
-          #!/usr/bin/env bash
-          exec python3 -m pip "$@"
-          EOF
-          sudo chmod +x /usr/local/bin/pip
-          sudo cp -f /usr/local/bin/pip /usr/bin/pip
-
-          # Install protobuf and python build dependencies system-wide for root
-          sudo python3 -m pip install --upgrade pip
-          sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" wheel setuptools
-
-      - name: Clone ErfanGSIs & Patch Version Guard
-        run: |
-          git clone --recurse-submodules https://github.com/erfanoabdi/ErfanGSIs.git GSI-Tool
+          git clone --recurse-submodules https://github.com/aj750390/ErfanGSIsmod.git GSI-Tool
           cd GSI-Tool
-          sed -i 's/pip /pip3 /g' setup.sh
           sudo bash setup.sh
-
-          # Directly patch make.sh where $RomVer is evaluated
-          sed -i 's/case "$RomVer" in/RomVer="11"\ncase "$RomVer" in/g' make.sh
-          sed -i 's/case \$RomVer in/RomVer="11"\ncase \$RomVer in/g' make.sh
-
-          # Walk all shell scripts using os.walk to catch any nested version guards
-          python3 - << 'EOF'
-          import os, re
-
-          for root, _, files in os.walk("."):
-              for file in files:
-                  if file.endswith(".sh"):
-                      path = os.path.join(root, file)
-                      with open(path, "r", errors="ignore") as f:
-                          content = f.read()
-                      if "is not supported" in content:
-                          print(f"Patching unsupported check in: {path}")
-                          # Neutralize exit 1 on unsupported versions
-                          content = re.sub(
-                              r'echo\s+["\']?\$(\w+)\s+is not supported["\']?\s*;\s*exit\s+1',
-                              r'echo "Forcing Android 11 Treble routine for $\1"',
-                              content
-                          )
-                          with open(path, "w") as f:
-                              f.write(content)
-          EOF
-
-          # Prevent APK signing crashes on modern Android 16 packages
-          mkdir -p roms/Pixel
-          touch roms/Pixel/DONTRESIGN
 
       - name: Build GSI
         run: |
