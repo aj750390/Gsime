@@ -41,7 +41,7 @@ jobs:
             p7zip-full unace unrar zip unzip simg2img \
             brotli aria2 xz-utils e2fsprogs libfuse-dev
           
-          # Executable wrapper to guarantee pip routes to python3
+          # Create an executable wrapper so any call to 'pip' routes to python3 -m pip
           sudo tee /usr/local/bin/pip > /dev/null << 'EOF'
           #!/usr/bin/env bash
           exec python3 -m pip "$@"
@@ -52,36 +52,20 @@ jobs:
           sudo python3 -m pip install --upgrade pip
           sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" pycryptodome wheel setuptools
 
-      - name: Clone Custom GSI Builder & Patch Python 3 Blocks
+      - name: Clone Custom GSI Builder & Fix mke2fs Float Division
         run: |
           git clone --recurse-submodules https://github.com/aj750390/ErfanGSIsmod.git GSI-Tool
           cd GSI-Tool
           sudo bash setup.sh
 
-          # Fix Python 3 float division in mkuserimg_mke2fs causing "invalid blocks '1126398.0'"
-          python3 - << 'EOF'
-          import os, re
+          # Patch mkuserimg_mke2fs across all extensions to enforce integer blocks
+          find tools/ -type f -exec sed -i -E 's|/ 4096|// 4096|g' {} +
+          find tools/ -type f -exec sed -i -E 's|/ block_size|// block_size|g' {} +
+          find tools/ -type f -exec sed -i -E 's|/int\(block_size\)|//int(block_size)|g' {} +
+          find tools/ -type f -exec sed -i -E 's|str\(blocks\)|str(int(float(blocks)))|g' {} +
+          find tools/ -type f -exec sed -i -E 's|str\(int\(blocks\)\)|str(int(float(blocks)))|g' {} +
 
-          for root, _, files in os.walk("."):
-              for file in files:
-                  if file.endswith(".py"):
-                      path = os.path.join(root, file)
-                      with open(path, "r", errors="ignore") as f:
-                          content = f.read()
-                      orig = content
-
-                      # Convert division to integer floor division
-                      content = re.sub(r'blocks\s*=\s*int\(([^/\n]+)\)\s*/\s*([^\n]+)', r'blocks = int(\1) // int(\2)', content)
-                      content = re.sub(r'blocks\s*=\s*([^/\n]+)/\s*([^\n]+)', r'blocks = int(int(\1) // int(\2))', content)
-                      content = re.sub(r'str\(\s*blocks\s*\)', r'str(int(float(blocks)))', content)
-                      content = content.replace('/ 4096', '// 4096')
-                      content = content.replace('/ block_size', '// block_size')
-
-                      if content != orig:
-                          print(f"Patched Python 3 blocks division in: {path}")
-                          with open(path, "w") as f:
-                              f.write(content)
-          EOF
+          echo "mke2fs integer division patch complete."
 
       - name: Build GSI
         run: |
@@ -93,18 +77,18 @@ jobs:
 
       - name: Fix Permissions & Compress Output Images
         run: |
-          # Reclaim ownership from root to prevent "Permission denied" during compression
           sudo chown -R $USER:$USER GSI-Tool/output
-
           cd GSI-Tool/output
           ls -lh
+
+          # Verify the image was built and is not 0 bytes
           for img in *.img; do
-            if [ -f "$img" ] && [ -s "$img" ]; then
-              echo "Compressing $img..."
-              xz -9 -T0 -v "$img"
-            elif [ -f "$img" ]; then
-              echo "Warning: $img is empty (0 bytes). Skipping compression."
+            if [ ! -s "$img" ]; then
+              echo "ERROR: $img is 0 bytes. Image creation failed!"
+              exit 1
             fi
+            echo "Compressing $img..."
+            xz -9 -T0 -v "$img"
           done
 
       - name: Upload Output Artifacts
