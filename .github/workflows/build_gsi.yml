@@ -49,7 +49,7 @@ jobs:
           sudo chmod +x /usr/local/bin/pip
           sudo cp -f /usr/local/bin/pip /usr/bin/pip
 
-          # Install protobuf system-wide for root
+          # Install protobuf and python build dependencies system-wide for root
           sudo python3 -m pip install --upgrade pip
           sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" wheel setuptools
 
@@ -60,28 +60,33 @@ jobs:
           sed -i 's/pip /pip3 /g' setup.sh
           sudo bash setup.sh
 
-          # Patch scripts to redirect unsupported versions (Android 14-16) to the base 11 routine
-          python3 - << 'EOF'
-          import glob, re
+          # Directly patch make.sh where $RomVer is evaluated
+          sed -i 's/case "$RomVer" in/RomVer="11"\ncase "$RomVer" in/g' make.sh
+          sed -i 's/case \$RomVer in/RomVer="11"\ncase \$RomVer in/g' make.sh
 
-          for sh_path in glob.glob("**/*.sh", recursive=True):
-              with open(sh_path, "r", errors="ignore") as f:
-                  content = f.read()
-              
-              match = re.search(r'echo\s+["\']?\$(\w+)\s+is not supported', content)
-              if match:
-                  var_name = match.group(1)
-                  print(f"Patching version check for ${var_name} in {sh_path}")
-                  patched = re.sub(
-                      rf'(case\s+["\']?\$?{var_name}["\']?\s+in)',
-                      rf'{var_name}="11"\n\1',
-                      content
-                  )
-                  with open(sh_path, "w") as f:
-                      f.write(patched)
+          # Walk all shell scripts using os.walk to catch any nested version guards
+          python3 - << 'EOF'
+          import os, re
+
+          for root, _, files in os.walk("."):
+              for file in files:
+                  if file.endswith(".sh"):
+                      path = os.path.join(root, file)
+                      with open(path, "r", errors="ignore") as f:
+                          content = f.read()
+                      if "is not supported" in content:
+                          print(f"Patching unsupported check in: {path}")
+                          # Neutralize exit 1 on unsupported versions
+                          content = re.sub(
+                              r'echo\s+["\']?\$(\w+)\s+is not supported["\']?\s*;\s*exit\s+1',
+                              r'echo "Forcing Android 11 Treble routine for $\1"',
+                              content
+                          )
+                          with open(path, "w") as f:
+                              f.write(content)
           EOF
 
-          # Prevent signing tools from aborting on Android 16 APK signatures
+          # Prevent APK signing crashes on modern Android 16 packages
           mkdir -p roms/Pixel
           touch roms/Pixel/DONTRESIGN
 
