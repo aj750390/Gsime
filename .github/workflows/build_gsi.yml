@@ -33,25 +33,37 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Install System Dependencies
+      - name: Install System Dependencies & Pip Wrapper
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             git python3 python3-pip python-is-python3 openjdk-11-jdk-headless \
             p7zip-full unace unrar zip unzip simg2img \
             brotli aria2 xz-utils e2fsprogs libfuse-dev
-          sudo ln -sf /usr/bin/pip3 /usr/bin/pip
+          
+          # Create an executable wrapper so any call to 'pip' routes to python3 -m pip
+          sudo tee /usr/local/bin/pip > /dev/null << 'EOF'
+          #!/usr/bin/env bash
+          exec python3 -m pip "$@"
+          EOF
+          sudo chmod +x /usr/local/bin/pip
+          sudo cp -f /usr/local/bin/pip /usr/bin/pip
+
+          # Ensure pip is up to date and install compatible protobuf version
+          python3 -m pip install --upgrade pip
+          python3 -m pip install "protobuf>=3.19.0,<3.21.0"
 
       - name: Clone ErfanGSIs Tools
         run: |
           git clone --recurse-submodules https://github.com/erfanoabdi/ErfanGSIs.git GSI-Tool
           cd GSI-Tool
+          sed -i 's/pip /pip3 /g' setup.sh
           bash setup.sh
 
       - name: Build GSI
         run: |
           cd GSI-Tool
-          sudo bash url2GSI.sh \
+          sudo PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python bash url2GSI.sh \
             "${{ github.event.inputs.rom_url }}" \
             "${{ github.event.inputs.rom_type }}" \
             ":${{ github.event.inputs.target_type }}"
