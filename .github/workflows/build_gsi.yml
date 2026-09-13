@@ -1,17 +1,17 @@
-name: Modern EROFS GSI Builder (Android 15/16)
+name: Port OEM GSI via ErfanGSIs
 
 on:
   workflow_dispatch:
     inputs:
       rom_url:
-        description: 'Direct ROM / OTA URL (Fastboot, Recovery, or Payload.bin zip)'
+        description: 'Direct download URL of the stock ROM (Fastboot, Recovery, or OTA zip)'
         required: true
       rom_type:
-        description: 'ROM Type (e.g., Pixel, HyperOS, OxygenOS, OneUI, Motorola)'
+        description: 'ROM Type (e.g., Pixel, OxygenOS, MIUI, OneUI, Flyme, ColorOS, Nubia)'
         required: true
         default: 'Pixel'
       target_type:
-        description: 'Partition layout target'
+        description: 'Target partition type'
         required: true
         default: 'AB'
         type: choice
@@ -33,37 +33,62 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Install Modern Tooling & EROFS Utilities
+      - name: Install System Dependencies & Pip Wrapper
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             git python3 python3-pip python-is-python3 openjdk-11-jdk-headless \
             p7zip-full unace unrar zip unzip simg2img \
-            brotli aria2 xz-utils e2fsprogs libfuse-dev \
-            erofs-utils curl wget
+            brotli aria2 xz-utils e2fsprogs libfuse-dev
+          
+          # Create an executable wrapper so any call to 'pip' routes to python3 -m pip
+          sudo tee /usr/local/bin/pip > /dev/null << 'EOF'
+          #!/usr/bin/env bash
+          exec python3 -m pip "$@"
+          EOF
+          sudo chmod +x /usr/local/bin/pip
+          sudo cp -f /usr/local/bin/pip /usr/bin/pip
 
-          # Install standalone high-speed payload-dumper-go
-          PAYLOAD_VER="1.2.2"
-          wget -q "https://github.com/ssut/payload-dumper-go/releases/download/${PAYLOAD_VER}/payload-dumper-go_${PAYLOAD_VER}_linux_amd64.tar.gz" -O payload-dumper.tar.gz
-          tar -xvf payload-dumper.tar.gz payload-dumper-go
-          sudo mv payload-dumper-go /usr/local/bin/
-          rm -f payload-dumper.tar.gz
+          # Install protobuf and python build dependencies system-wide for root
+          sudo python3 -m pip install --upgrade pip
+          sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" wheel setuptools
 
-      - name: Clone Modern GSI Builder
+      - name: Clone ErfanGSIs & Add Modern Version Profiles
         run: |
-          git clone --recurse-submodules https://github.com/xiaoleGun/Actions-GSI-Builder.git GSI-Tool
+          git clone --recurse-submodules https://github.com/erfanoabdi/ErfanGSIs.git GSI-Tool
           cd GSI-Tool
+          sed -i 's/pip /pip3 /g' setup.sh
           sudo bash setup.sh
 
-      - name: Build Android 15/16 GSI
+          # Find the highest existing Android version profile folder (e.g., 11 or 12)
+          LATEST_ROM_VER=$(ls -d roms/*/ | grep -o -E '[0-9]+' | sort -n | tail -1)
+          echo "Cloning modern profiles using Android $LATEST_ROM_VER as base template..."
+
+          # Dynamically create profile directories for Android 13 through 16
+          for v in 13 14 15 16; do
+            if [ ! -d "roms/$v" ]; then
+              echo "Creating roms/$v from roms/$LATEST_ROM_VER"
+              cp -r "roms/$LATEST_ROM_VER" "roms/$v"
+            fi
+            if [ -d "prebuilt/$LATEST_ROM_VER" ] && [ ! -d "prebuilt/$v" ]; then
+              echo "Creating prebuilt/$v from prebuilt/$LATEST_ROM_VER"
+              cp -r "prebuilt/$LATEST_ROM_VER" "prebuilt/$v"
+            fi
+            # Disable legacy APK resigning that fails on modern APEX/framework packages
+            if [ -d "roms/$v/Pixel" ]; then
+              touch "roms/$v/Pixel/DONTRESIGN"
+            fi
+          done
+
+      - name: Build GSI
         run: |
           cd GSI-Tool
-          sudo bash make.sh \
+          sudo -E PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python bash url2GSI.sh \
             "${{ github.event.inputs.rom_url }}" \
             "${{ github.event.inputs.rom_type }}" \
             ":${{ github.event.inputs.target_type }}"
 
-      - name: Compress System Images
+      - name: Compress Output Images
         run: |
           cd GSI-Tool/output
           ls -lh
@@ -74,7 +99,7 @@ jobs:
             fi
           done
 
-      - name: Upload GSI Artifacts
+      - name: Upload Output Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ github.event.inputs.rom_type }}-Android16-GSI
