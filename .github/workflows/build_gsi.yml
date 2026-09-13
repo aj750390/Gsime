@@ -37,9 +37,10 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            git python3 python3-pip openjdk-11-jdk-headless \
+            git python3 python3-pip python-is-python3 openjdk-11-jdk-headless \
             p7zip-full unace unrar zip unzip simg2img \
             brotli aria2 xz-utils e2fsprogs libfuse-dev
+          sudo ln -sf /usr/bin/pip3 /usr/bin/pip
 
       - name: Clone ErfanGSIs Tools
         run: |
@@ -72,4 +73,3 @@ jobs:
           name: ${{ github.event.inputs.rom_type }}-GSI-${{ github.event.inputs.target_type }}
           path: GSI-Tool/output/*.img.xz
           retention-days: 5
-
