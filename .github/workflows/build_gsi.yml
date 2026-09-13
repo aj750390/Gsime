@@ -33,11 +33,55 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Clone Custom GSI Builder
+      - name: Install System Dependencies & Pip Wrapper
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git python3 python3-pip python-is-python3 openjdk-11-jdk-headless \
+            p7zip-full unace unrar zip unzip simg2img \
+            brotli aria2 xz-utils e2fsprogs libfuse-dev
+          
+          # Executable wrapper to guarantee pip routes to python3
+          sudo tee /usr/local/bin/pip > /dev/null << 'EOF'
+          #!/usr/bin/env bash
+          exec python3 -m pip "$@"
+          EOF
+          sudo chmod +x /usr/local/bin/pip
+          sudo cp -f /usr/local/bin/pip /usr/bin/pip
+
+          sudo python3 -m pip install --upgrade pip
+          sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" pycryptodome wheel setuptools
+
+      - name: Clone Custom GSI Builder & Patch Python 3 Blocks
         run: |
           git clone --recurse-submodules https://github.com/aj750390/ErfanGSIsmod.git GSI-Tool
           cd GSI-Tool
           sudo bash setup.sh
+
+          # Fix Python 3 float division in mkuserimg_mke2fs causing "invalid blocks '1126398.0'"
+          python3 - << 'EOF'
+          import os, re
+
+          for root, _, files in os.walk("."):
+              for file in files:
+                  if file.endswith(".py"):
+                      path = os.path.join(root, file)
+                      with open(path, "r", errors="ignore") as f:
+                          content = f.read()
+                      orig = content
+
+                      # Convert division to integer floor division
+                      content = re.sub(r'blocks\s*=\s*int\(([^/\n]+)\)\s*/\s*([^\n]+)', r'blocks = int(\1) // int(\2)', content)
+                      content = re.sub(r'blocks\s*=\s*([^/\n]+)/\s*([^\n]+)', r'blocks = int(int(\1) // int(\2))', content)
+                      content = re.sub(r'str\(\s*blocks\s*\)', r'str(int(float(blocks)))', content)
+                      content = content.replace('/ 4096', '// 4096')
+                      content = content.replace('/ block_size', '// block_size')
+
+                      if content != orig:
+                          print(f"Patched Python 3 blocks division in: {path}")
+                          with open(path, "w") as f:
+                              f.write(content)
+          EOF
 
       - name: Build GSI
         run: |
@@ -47,14 +91,19 @@ jobs:
             "${{ github.event.inputs.rom_type }}" \
             ":${{ github.event.inputs.target_type }}"
 
-      - name: Compress Output Images
+      - name: Fix Permissions & Compress Output Images
         run: |
+          # Reclaim ownership from root to prevent "Permission denied" during compression
+          sudo chown -R $USER:$USER GSI-Tool/output
+
           cd GSI-Tool/output
           ls -lh
           for img in *.img; do
-            if [ -f "$img" ]; then
+            if [ -f "$img" ] && [ -s "$img" ]; then
               echo "Compressing $img..."
               xz -9 -T0 -v "$img"
+            elif [ -f "$img" ]; then
+              echo "Warning: $img is empty (0 bytes). Skipping compression."
             fi
           done
 
