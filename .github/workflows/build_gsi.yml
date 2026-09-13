@@ -49,21 +49,21 @@ jobs:
           sudo chmod +x /usr/local/bin/pip
           sudo cp -f /usr/local/bin/pip /usr/bin/pip
 
-          # Ensure pip is up to date and install compatible protobuf version
-          python3 -m pip install --upgrade pip
-          python3 -m pip install "protobuf>=3.19.0,<3.21.0"
+          # Install protobuf and python build dependencies system-wide for root
+          sudo python3 -m pip install --upgrade pip
+          sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" wheel setuptools
 
       - name: Clone ErfanGSIs Tools
         run: |
           git clone --recurse-submodules https://github.com/erfanoabdi/ErfanGSIs.git GSI-Tool
           cd GSI-Tool
           sed -i 's/pip /pip3 /g' setup.sh
-          bash setup.sh
+          sudo bash setup.sh
 
       - name: Build GSI
         run: |
           cd GSI-Tool
-          sudo PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python bash url2GSI.sh \
+          sudo -E PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python bash url2GSI.sh \
             "${{ github.event.inputs.rom_url }}" \
             "${{ github.event.inputs.rom_type }}" \
             ":${{ github.event.inputs.target_type }}"
