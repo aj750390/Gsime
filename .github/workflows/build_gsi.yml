@@ -1,17 +1,17 @@
-name: Port OEM GSI via ErfanGSIs
+name: Modern EROFS GSI Builder (Android 15/16)
 
 on:
   workflow_dispatch:
     inputs:
       rom_url:
-        description: 'Direct download URL of the stock ROM (Fastboot, Recovery, or OTA zip)'
+        description: 'Direct ROM / OTA URL (Fastboot, Recovery, or Payload.bin zip)'
         required: true
       rom_type:
-        description: 'ROM Type (e.g., Pixel, OxygenOS, MIUI, OneUI, Flyme, ColorOS, Nubia)'
+        description: 'ROM Type (e.g., Pixel, HyperOS, OxygenOS, OneUI, Motorola)'
         required: true
         default: 'Pixel'
       target_type:
-        description: 'Target partition type'
+        description: 'Partition layout target'
         required: true
         default: 'AB'
         type: choice
@@ -33,42 +33,37 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Install System Dependencies & Pip Wrapper
+      - name: Install Modern Tooling & EROFS Utilities
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             git python3 python3-pip python-is-python3 openjdk-11-jdk-headless \
             p7zip-full unace unrar zip unzip simg2img \
-            brotli aria2 xz-utils e2fsprogs libfuse-dev
-          
-          # Create an executable wrapper so any call to 'pip' routes to python3 -m pip
-          sudo tee /usr/local/bin/pip > /dev/null << 'EOF'
-          #!/usr/bin/env bash
-          exec python3 -m pip "$@"
-          EOF
-          sudo chmod +x /usr/local/bin/pip
-          sudo cp -f /usr/local/bin/pip /usr/bin/pip
+            brotli aria2 xz-utils e2fsprogs libfuse-dev \
+            erofs-utils curl wget
 
-          # Install protobuf and python build dependencies system-wide for root
-          sudo python3 -m pip install --upgrade pip
-          sudo python3 -m pip install "protobuf>=3.19.0,<3.21.0" wheel setuptools
+          # Install standalone high-speed payload-dumper-go
+          PAYLOAD_VER="1.2.2"
+          wget -q "https://github.com/ssut/payload-dumper-go/releases/download/${PAYLOAD_VER}/payload-dumper-go_${PAYLOAD_VER}_linux_amd64.tar.gz" -O payload-dumper.tar.gz
+          tar -xvf payload-dumper.tar.gz payload-dumper-go
+          sudo mv payload-dumper-go /usr/local/bin/
+          rm -f payload-dumper.tar.gz
 
-      - name: Clone ErfanGSIs Tools
+      - name: Clone Modern GSI Builder
         run: |
-          git clone --recurse-submodules https://github.com/erfanoabdi/ErfanGSIs.git GSI-Tool
+          git clone --recurse-submodules https://github.com/xiaoleGun/Actions-GSI-Builder.git GSI-Tool
           cd GSI-Tool
-          sed -i 's/pip /pip3 /g' setup.sh
           sudo bash setup.sh
 
-      - name: Build GSI
+      - name: Build Android 15/16 GSI
         run: |
           cd GSI-Tool
-          sudo -E PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python bash url2GSI.sh \
+          sudo bash make.sh \
             "${{ github.event.inputs.rom_url }}" \
             "${{ github.event.inputs.rom_type }}" \
             ":${{ github.event.inputs.target_type }}"
 
-      - name: Compress Output Images
+      - name: Compress System Images
         run: |
           cd GSI-Tool/output
           ls -lh
@@ -79,9 +74,9 @@ jobs:
             fi
           done
 
-      - name: Upload Output Artifacts
+      - name: Upload GSI Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ github.event.inputs.rom_type }}-GSI-${{ github.event.inputs.target_type }}
+          name: ${{ github.event.inputs.rom_type }}-Android16-GSI
           path: GSI-Tool/output/*.img.xz
           retention-days: 5
