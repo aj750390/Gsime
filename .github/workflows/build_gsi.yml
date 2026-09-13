@@ -1,1 +1,75 @@
+name: Port OEM GSI via ErfanGSIs
+
+on:
+  workflow_dispatch:
+    inputs:
+      rom_url:
+        description: 'Direct download URL of the stock ROM (Fastboot, Recovery, or OTA zip)'
+        required: true
+      rom_type:
+        description: 'ROM Type (e.g., Pixel, OxygenOS, MIUI, OneUI, Flyme, ColorOS, Nubia)'
+        required: true
+        default: 'Pixel'
+      target_type:
+        description: 'Target partition type'
+        required: true
+        default: 'AB'
+        type: choice
+        options:
+          - 'AB'
+          - 'A'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Maximize Build Space
+        run: |
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force
+          sudo apt-get clean
+          df -h
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            git python3 python3-pip openjdk-11-jdk-headless \
+            p7zip-full unace unrar zip unzip simg2img \
+            brotli aria2 xz-utils e2fsprogs libfuse-dev
+
+      - name: Clone ErfanGSIs Tools
+        run: |
+          git clone --recurse-submodules https://github.com/erfanoabdi/ErfanGSIs.git GSI-Tool
+          cd GSI-Tool
+          bash setup.sh
+
+      - name: Build GSI
+        run: |
+          cd GSI-Tool
+          sudo bash url2GSI.sh \
+            "${{ github.event.inputs.rom_url }}" \
+            "${{ github.event.inputs.rom_type }}" \
+            ":${{ github.event.inputs.target_type }}"
+
+      - name: Compress Output Images
+        run: |
+          cd GSI-Tool/output
+          ls -lh
+          for img in *.img; do
+            if [ -f "$img" ]; then
+              echo "Compressing $img..."
+              xz -9 -T0 -v "$img"
+            fi
+          done
+
+      - name: Upload Output Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.inputs.rom_type }}-GSI-${{ github.event.inputs.target_type }}
+          path: GSI-Tool/output/*.img.xz
+          retention-days: 5
 
